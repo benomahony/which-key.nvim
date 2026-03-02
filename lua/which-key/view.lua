@@ -182,6 +182,41 @@ function M.item(node, opts)
     desc = node.keys
   end
   desc = M.replace("desc", desc or "")
+
+  -- Parse <hl>...</hl> tags for explicit highlight ranges.
+  -- "Go to <hl>G</hl>itHub in the <hl>b</hl>rowser"
+  --   → strips tags, records exact byte ranges {7,7} and {21,21} in cleaned text.
+  -- Any number of spans can be marked, including the same character multiple times.
+  local desc_hl_ranges = nil
+  if desc:find("<hl>", 1, true) then
+    local parts = {}
+    local byte_pos = 0
+    local remaining = desc
+    while true do
+      local tag_s = remaining:find("<hl>", 1, true)
+      if not tag_s then
+        parts[#parts + 1] = remaining
+        break
+      end
+      local pre = remaining:sub(1, tag_s - 1)
+      parts[#parts + 1] = pre
+      byte_pos = byte_pos + #pre
+      local span_s = tag_s + 4 -- after "<hl>"
+      local tag_e = remaining:find("</hl>", span_s, true)
+      if not tag_e then -- unclosed tag — leave rest verbatim
+        parts[#parts + 1] = remaining:sub(tag_s)
+        break
+      end
+      local span = remaining:sub(span_s, tag_e - 1)
+      parts[#parts + 1] = span
+      desc_hl_ranges = desc_hl_ranges or {}
+      desc_hl_ranges[#desc_hl_ranges + 1] = { byte_pos + 1, byte_pos + #span }
+      byte_pos = byte_pos + #span
+      remaining = remaining:sub(tag_e + 5) -- after "</hl>"
+    end
+    desc = table.concat(parts)
+  end
+
   local icon, icon_hl = M.icon(node)
 
   local raw_key = node.key
@@ -198,6 +233,7 @@ function M.item(node, opts)
     key = M.replace("key", raw_key),
     raw_key = raw_key,
     desc = group and Config.icons.group .. desc or desc,
+    desc_hl_ranges = desc_hl_ranges,
     group = group,
   }, { __index = node })
 end
@@ -264,16 +300,14 @@ function M.expand(root, node, expand, filter, ret)
   return ret
 end
 
---- Split description text into segments, highlighting characters that match key chars.
---- Exact case is tried first; case-insensitive matching is used as a fallback.
---- e.g. key `B` highlights `B` in "Browser" (not the `b` in "GitHub"),
----      key `g` (no exact match) falls back and highlights `G` in "GitHub".
----@param text string The description text (may include layout padding)
----@param raw_key string The raw key sequence for this mapping
----@param base_hl string The base highlight group for non-matching text
----@return wk.Segment[]
-local function desc_segments(text, raw_key, base_hl)
-  -- Extract unique plain key characters; skip modifiers like <leader>, <C-x>, etc.
+--- Auto-match key chars in text and return byte ranges {start, end} (1-indexed).
+--- Exact case is tried first; case-insensitive is used as a fallback so that
+--- e.g. key `B` matches `B` in "Browser" (not the `b` in "GitHub"), while
+--- key `g` (no exact match) falls back and matches `G` in "GitHub".
+---@param text string
+---@param raw_key string
+---@return {[1]:number,[2]:number}[]
+local function key_ranges(text, raw_key)
   local chars = {}
   local seen = {}
   for _, key in ipairs(Util.keys(raw_key)) do
@@ -282,72 +316,69 @@ local function desc_segments(text, raw_key, base_hl)
       chars[#chars + 1] = key
     end
   end
-
-  if #chars == 0 then
-    return { { str = text, hl = base_hl, width = #text } }
-  end
-
-  -- For each char, try an exact case match first, then fall back to case-insensitive.
-  -- This ensures e.g. key `B` matches `B` in "Browser", not the `b` in "GitHub".
-  local match_pos = {} -- byte_pos → matched substring from original text
-  local used = {} -- byte positions already claimed
-  local lower_text = text:lower()
+  local ranges = {}
+  local used = {}
+  local lower = text:lower()
   for _, char in ipairs(chars) do
     local found = false
-    -- Pass 1: exact case
     local search = 1
+    -- Pass 1: exact case
     while search <= #text do
       local pos = text:find(char, search, true)
-      if not pos then
-        break
-      end
+      if not pos then break end
       if not used[pos] then
         used[pos] = true
-        match_pos[pos] = text:sub(pos, pos + #char - 1)
+        ranges[#ranges + 1] = { pos, pos + #char - 1 }
         found = true
         break
       end
       search = pos + 1
     end
-    -- Pass 2: case-insensitive fallback (only when no exact match was found)
+    -- Pass 2: case-insensitive fallback
     if not found then
-      local lower_char = char:lower()
+      local lc = char:lower()
       search = 1
-      while search <= #lower_text do
-        local pos = lower_text:find(lower_char, search, true)
-        if not pos then
-          break
-        end
+      while search <= #lower do
+        local pos = lower:find(lc, search, true)
+        if not pos then break end
         if not used[pos] then
           used[pos] = true
-          match_pos[pos] = text:sub(pos, pos + #char - 1)
+          ranges[#ranges + 1] = { pos, pos + #char - 1 }
           break
         end
         search = pos + 1
       end
     end
   end
+  return ranges
+end
 
-  if vim.tbl_isempty(match_pos) then
+--- Render description text as segments, applying WhichKeyDescMatch to the given ranges.
+---@param text string The description text (may include layout padding)
+---@param ranges {[1]:number,[2]:number}[] Byte ranges to highlight (1-indexed, sorted)
+---@param base_hl string The base highlight group for non-matching text
+---@return wk.Segment[]
+local function desc_segments(text, ranges, base_hl)
+  if #ranges == 0 then
     return { { str = text, hl = base_hl, width = #text } }
   end
-
-  -- Build segments alternating between base-highlighted and match-highlighted runs.
+  table.sort(ranges, function(a, b) return a[1] < b[1] end)
   local segments = {}
   local i = 1
-  while i <= #text do
-    if match_pos[i] then
-      local m = match_pos[i]
-      segments[#segments + 1] = { str = m, hl = "WhichKeyDescMatch", width = #m }
-      i = i + #m
-    else
-      local start = i
-      repeat
-        i = i + 1
-      until i > #text or match_pos[i]
-      local s = text:sub(start, i - 1)
-      segments[#segments + 1] = { str = s, hl = base_hl, width = #s }
+  for _, range in ipairs(ranges) do
+    local s, e = range[1], math.min(range[2], #text)
+    if s > #text then break end
+    if i < s then
+      local str = text:sub(i, s - 1)
+      segments[#segments + 1] = { str = str, hl = base_hl, width = #str }
     end
+    local str = text:sub(s, e)
+    segments[#segments + 1] = { str = str, hl = "WhichKeyDescMatch", width = #str }
+    i = e + 1
+  end
+  if i <= #text then
+    local str = text:sub(i)
+    segments[#segments + 1] = { str = str, hl = base_hl, width = #str }
   end
   return segments
 end
@@ -452,7 +483,9 @@ function M.show()
           if cols[c].key == "desc" then
             hl = item.group and "WhichKeyGroup" or "WhichKeyDesc"
             if Config.highlight_desc_keys and not item.group then
-              text:append(desc_segments(col.value, item.raw_key, hl))
+              -- Use explicit <hl>...</hl> ranges when present; otherwise auto-match key chars.
+              local ranges = item.desc_hl_ranges or key_ranges(col.value, item.raw_key)
+              text:append(desc_segments(col.value, ranges, hl))
             else
               text:append(col.value, hl)
             end

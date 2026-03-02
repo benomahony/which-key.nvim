@@ -111,6 +111,7 @@
 ---@field key string
 ---@field raw_key string
 ---@field desc string
+---@field desc_hl_ranges? {[1]:number,[2]:number}[] Byte ranges from <hl>...</hl> tags
 ---@field group? boolean
 ---@field order? number
 ---@field icon? string

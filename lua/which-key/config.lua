@@ -168,8 +168,11 @@ local defaults = {
     },
   },
   -- Highlight key characters that appear in the description text.
-  -- For example, for `<leader>gB` = "Open GitHub in Browser", the `g` and `B`
-  -- will be highlighted wherever they appear in the description.
+  -- Auto-matching: for `<leader>gB` = "Open GitHub in Browser", the `g` and `B`
+  -- are located in the description and highlighted automatically.
+  -- Explicit: wrap any characters in <hl>...</hl> in your description string to
+  -- control exactly which characters are highlighted, e.g.
+  --   "<hl>g</hl>o to <hl>G</hl>itHub in the <hl>b</hl>rowser"
   highlight_desc_keys = true,
   show_help = true, -- show a help message in the command line for using WhichKey
   show_keys = true, -- show the currently pressed key and its label as a message in the command line
