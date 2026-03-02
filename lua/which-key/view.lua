@@ -265,7 +265,9 @@ function M.expand(root, node, expand, filter, ret)
 end
 
 --- Split description text into segments, highlighting characters that match key chars.
---- Matching is case-insensitive so e.g. key `g` highlights `G` in "GitHub".
+--- Exact case is tried first; case-insensitive matching is used as a fallback.
+--- e.g. key `B` highlights `B` in "Browser" (not the `b` in "GitHub"),
+---      key `g` (no exact match) falls back and highlights `G` in "GitHub".
 ---@param text string The description text (may include layout padding)
 ---@param raw_key string The raw key sequence for this mapping
 ---@param base_hl string The base highlight group for non-matching text
@@ -285,24 +287,44 @@ local function desc_segments(text, raw_key, base_hl)
     return { { str = text, hl = base_hl, width = #text } }
   end
 
-  -- Find the first non-overlapping occurrence of each char (case-insensitive).
+  -- For each char, try an exact case match first, then fall back to case-insensitive.
+  -- This ensures e.g. key `B` matches `B` in "Browser", not the `b` in "GitHub".
   local match_pos = {} -- byte_pos → matched substring from original text
   local used = {} -- byte positions already claimed
   local lower_text = text:lower()
   for _, char in ipairs(chars) do
-    local lower_char = char:lower()
+    local found = false
+    -- Pass 1: exact case
     local search = 1
-    while search <= #lower_text do
-      local pos = lower_text:find(lower_char, search, true)
+    while search <= #text do
+      local pos = text:find(char, search, true)
       if not pos then
         break
       end
       if not used[pos] then
         used[pos] = true
         match_pos[pos] = text:sub(pos, pos + #char - 1)
+        found = true
         break
       end
       search = pos + 1
+    end
+    -- Pass 2: case-insensitive fallback (only when no exact match was found)
+    if not found then
+      local lower_char = char:lower()
+      search = 1
+      while search <= #lower_text do
+        local pos = lower_text:find(lower_char, search, true)
+        if not pos then
+          break
+        end
+        if not used[pos] then
+          used[pos] = true
+          match_pos[pos] = text:sub(pos, pos + #char - 1)
+          break
+        end
+        search = pos + 1
+      end
     end
   end
 
