@@ -183,38 +183,40 @@ function M.item(node, opts)
   end
   desc = M.replace("desc", desc or "")
 
-  -- Parse <hl>...</hl> tags for explicit highlight ranges.
-  -- "Go to <hl>G</hl>itHub in the <hl>b</hl>rowser"
-  --   → strips tags, records exact byte ranges {7,7} and {21,21} in cleaned text.
-  -- Any number of spans can be marked, including the same character multiple times.
+  -- Parse [x] markers for explicit highlight ranges (single char inside brackets only).
+  -- "[g]o to [G]itHub in the [B]rowser"
+  --   → strips brackets, records exact byte ranges {1,1}, {7,7}, {21,21}.
+  -- Multi-char brackets like "[count]" are left untouched.
   local desc_hl_ranges = nil
-  if desc:find("<hl>", 1, true) then
+  if desc:find("%[.%]") then -- quick pre-check: at least one [x] present
     local parts = {}
     local byte_pos = 0
     local remaining = desc
-    while true do
-      local tag_s = remaining:find("<hl>", 1, true)
-      if not tag_s then
+    while #remaining > 0 do
+      local bracket_s, bracket_e, char = remaining:find("%[(.-)%]")
+      if not bracket_s then
         parts[#parts + 1] = remaining
         break
       end
-      local pre = remaining:sub(1, tag_s - 1)
-      parts[#parts + 1] = pre
-      byte_pos = byte_pos + #pre
-      local span_s = tag_s + 4 -- after "<hl>"
-      local tag_e = remaining:find("</hl>", span_s, true)
-      if not tag_e then -- unclosed tag — leave rest verbatim
-        parts[#parts + 1] = remaining:sub(tag_s)
-        break
+      if vim.fn.strcharlen(char) ~= 1 then
+        -- multi-char bracket — copy verbatim up to and including ']' and continue
+        parts[#parts + 1] = remaining:sub(1, bracket_e)
+        byte_pos = byte_pos + bracket_e
+        remaining = remaining:sub(bracket_e + 1)
+      else
+        local pre = remaining:sub(1, bracket_s - 1)
+        parts[#parts + 1] = pre
+        byte_pos = byte_pos + #pre
+        parts[#parts + 1] = char
+        desc_hl_ranges = desc_hl_ranges or {}
+        desc_hl_ranges[#desc_hl_ranges + 1] = { byte_pos + 1, byte_pos + #char }
+        byte_pos = byte_pos + #char
+        remaining = remaining:sub(bracket_e + 1)
       end
-      local span = remaining:sub(span_s, tag_e - 1)
-      parts[#parts + 1] = span
-      desc_hl_ranges = desc_hl_ranges or {}
-      desc_hl_ranges[#desc_hl_ranges + 1] = { byte_pos + 1, byte_pos + #span }
-      byte_pos = byte_pos + #span
-      remaining = remaining:sub(tag_e + 5) -- after "</hl>"
     end
-    desc = table.concat(parts)
+    if desc_hl_ranges then
+      desc = table.concat(parts)
+    end
   end
 
   local icon, icon_hl = M.icon(node)

@@ -170,9 +170,10 @@ local defaults = {
   -- Highlight key characters that appear in the description text.
   -- Auto-matching: for `<leader>gB` = "Open GitHub in Browser", the `g` and `B`
   -- are located in the description and highlighted automatically.
-  -- Explicit: wrap any characters in <hl>...</hl> in your description string to
+  -- Explicit: wrap single characters in [x] in your description string to
   -- control exactly which characters are highlighted, e.g.
-  --   "<hl>g</hl>o to <hl>G</hl>itHub in the <hl>b</hl>rowser"
+  --   "[g]o to [G]itHub in the [B]rowser"
+  -- Multi-char brackets like "[count]" are left untouched.
   highlight_desc_keys = true,
   show_help = true, -- show a help message in the command line for using WhichKey
   show_keys = true, -- show the currently pressed key and its label as a message in the command line
