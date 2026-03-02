@@ -5,6 +5,7 @@ M.colors = {
   Separator = "Comment", -- the separator between the key and its description
   Group = "Keyword", -- group name
   Desc = "Identifier", -- description
+  DescMatch = "WhichKey", -- characters in description that match the key
   Normal = "NormalFloat", -- Normal in th which-key window
   Title = "FloatTitle", -- Title of the which-key window
   Border = "FloatBorder", -- Border of the which-key window

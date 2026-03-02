@@ -264,6 +264,72 @@ function M.expand(root, node, expand, filter, ret)
   return ret
 end
 
+--- Split description text into segments, highlighting characters that match key chars.
+--- Matching is case-insensitive so e.g. key `g` highlights `G` in "GitHub".
+---@param text string The description text (may include layout padding)
+---@param raw_key string The raw key sequence for this mapping
+---@param base_hl string The base highlight group for non-matching text
+---@return wk.Segment[]
+local function desc_segments(text, raw_key, base_hl)
+  -- Extract unique plain key characters; skip modifiers like <leader>, <C-x>, etc.
+  local chars = {}
+  local seen = {}
+  for _, key in ipairs(Util.keys(raw_key)) do
+    if not key:match("^<.*>$") and key:match("%S") and not seen[key] then
+      seen[key] = true
+      chars[#chars + 1] = key
+    end
+  end
+
+  if #chars == 0 then
+    return { { str = text, hl = base_hl, width = #text } }
+  end
+
+  -- Find the first non-overlapping occurrence of each char (case-insensitive).
+  local match_pos = {} -- byte_pos → matched substring from original text
+  local used = {} -- byte positions already claimed
+  local lower_text = text:lower()
+  for _, char in ipairs(chars) do
+    local lower_char = char:lower()
+    local search = 1
+    while search <= #lower_text do
+      local pos = lower_text:find(lower_char, search, true)
+      if not pos then
+        break
+      end
+      if not used[pos] then
+        used[pos] = true
+        match_pos[pos] = text:sub(pos, pos + #char - 1)
+        break
+      end
+      search = pos + 1
+    end
+  end
+
+  if vim.tbl_isempty(match_pos) then
+    return { { str = text, hl = base_hl, width = #text } }
+  end
+
+  -- Build segments alternating between base-highlighted and match-highlighted runs.
+  local segments = {}
+  local i = 1
+  while i <= #text do
+    if match_pos[i] then
+      local m = match_pos[i]
+      segments[#segments + 1] = { str = m, hl = "WhichKeyDescMatch", width = #m }
+      i = i + #m
+    else
+      local start = i
+      repeat
+        i = i + 1
+      until i > #text or match_pos[i]
+      local s = text:sub(start, i - 1)
+      segments[#segments + 1] = { str = s, hl = base_hl, width = #s }
+    end
+  end
+  return segments
+end
+
 function M.show()
   local state = State.state
   if not (state and state.show and state.node:is_group()) then
@@ -363,11 +429,17 @@ function M.show()
           local hl = col.hl
           if cols[c].key == "desc" then
             hl = item.group and "WhichKeyGroup" or "WhichKeyDesc"
+            if Config.highlight_desc_keys and not item.group then
+              text:append(desc_segments(col.value, item.raw_key, hl))
+            else
+              text:append(col.value, hl)
+            end
+          else
+            if cols[c].key == "icon" then
+              hl = item.icon_hl
+            end
+            text:append(col.value, hl)
           end
-          if cols[c].key == "icon" then
-            hl = item.icon_hl
-          end
-          text:append(col.value, hl)
         end
       end
     end
